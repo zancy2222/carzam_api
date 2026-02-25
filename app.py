@@ -23,7 +23,7 @@ FEATURES_PATH = 'model/features.pkl'
 DB_CONFIG = {
     'user': 'u784630674_root',
     'password': 'Carzam123.',
-    'host': 'localhost',    
+    'host': 'srv2101.hstgr.io',  # <-- not localhost
     'database': 'u784630674_icrr'
 }
 
