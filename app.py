@@ -21,10 +21,10 @@ FEATURES_PATH = 'model/features.pkl'
 
 # DB Config
 DB_CONFIG = {
-    'user': 'root',
-    'password': '',
-    'host': 'localhost',
-    'database': 'icrr'
+    'user': 'u784630674_root',
+    'password': 'Carzam123.',
+    'host': 'srv2101.hstgr.io',   # ← Replace with actual host
+    'database': 'u784630674_icrr'
 }
 
 # Global models

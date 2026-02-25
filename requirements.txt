@@ -1,0 +1,8 @@
+Flask
+flask-cors
+pandas
+joblib
+scikit-learn
+SQLAlchemy
+mysql-connector-python
+gunicorn
