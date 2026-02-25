@@ -273,7 +273,17 @@ def predict():
         "model_type": "Pure Double Decision Tree + Natural Language Inquiry",
         "status": "success"
     })
-
+@app.route('/dbtest')
+def dbtest():
+    from sqlalchemy import create_engine
+    try:
+        engine = create_engine(f"mysql+mysqlconnector://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}")
+        conn = engine.connect()
+        conn.close()
+        return {"status": "ok", "message": "DB connected"}
+    except Exception as e:
+        return {"status": "fail", "error": str(e)}
+    
 @app.route('/')
 def home():
     return "<h1>CARZAM AI v6 — PURE DOUBLE DTA + INQUIRY KEYWORDS (100% ML)</h1>"
