@@ -90,16 +90,18 @@ def train_double_dt():
 def load_models():
     global type_model, name_model, encoders, features
     paths = [TYPE_MODEL_PATH, NAME_MODEL_PATH, ENCODER_PATH, FEATURES_PATH]
+    
     if all(os.path.exists(p) for p in paths):
         type_model = joblib.load(TYPE_MODEL_PATH)
         name_model = joblib.load(NAME_MODEL_PATH)
         encoders = joblib.load(ENCODER_PATH)
         features = joblib.load(FEATURES_PATH)
-        print("PURE DOUBLE DTA + INQUIRY LOADED")
+        print("MODELS LOADED SUCCESSFULLY")
         return True
     else:
-        print("Models not found. Training...")
-        return train_double_dt()
+        # On Render, we don't want to wait for training during startup
+        print("CRITICAL: Models not found in repository!")
+        return False
 
 def predict_with_double_dt(payload):
     if type_model is None or name_model is None:
@@ -290,4 +292,7 @@ def home():
 
 if __name__ == '__main__':
     load_models()
-    app.run(port=5000, debug=False)
+    # Render provides the PORT variable; default to 5000 for local
+    port = int(os.environ.get("PORT", 5000))
+    # '0.0.0.0' is REQUIRED for Render to see the app
+    app.run(host='0.0.0.0', port=port)
