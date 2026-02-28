@@ -1,4 +1,4 @@
-# api/app.py → FINAL v4.0 | WITH AI EXPLANATION + INQUIRY SUPPORT
+# api/app.py → PURE DOUBLE DTA + INQUIRY KEYWORD FILTERING (100% Decision Tree Logic)
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import pandas as pd
@@ -6,7 +6,6 @@ import joblib
 import os
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import classification_report, accuracy_score
 from sqlalchemy import create_engine, text
 import warnings
 warnings.filterwarnings('ignore')
@@ -14,155 +13,99 @@ warnings.filterwarnings('ignore')
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-MODEL_PATH = 'model/pure_dt_model.pkl'
-ENCODER_PATH = 'model/pure_encoders.pkl'
-FEATURES_PATH = 'model/pure_features.pkl'
+# Model paths
+TYPE_MODEL_PATH = 'model/dt_car_type.pkl'
+NAME_MODEL_PATH = 'model/dt_car_name.pkl'
+ENCODER_PATH = 'model/encoders.pkl'
+FEATURES_PATH = 'model/features.pkl'
 
+# DB Config
 DB_CONFIG = {
-    'user': 'root',
-    'password': '',
-    'host': 'localhost',
-    'database': 'icrr'
+    'user': 'u784630674_root',
+    'password': 'Carzam123.',
+    'host': 'srv2101.hstgr.io',  # <-- not localhost
+    'database': 'u784630674_icrr'
 }
 
-model = None
+# Global models
+type_model = None
+name_model = None
 encoders = {}
 features = []
 
 def extract_training_data():
     engine = create_engine(f"mysql+mysqlconnector://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}")
     sql = """
-    SELECT 
+    SELECT
+        ci.id AS car_id,
+        ci.car_name,
+        ci.car_type,
         ci.capacity,
         bh.total_amount AS budget,
         TIMESTAMPDIFF(DAY, bh.start_date, bh.end_date) + 1 AS duration_days,
-        JSON_UNQUOTE(JSON_EXTRACT(bh.trip_purpose, '$[0]')) AS trip_purpose,
-        ci.car_type
+        JSON_UNQUOTE(JSON_EXTRACT(bh.trip_purpose, '$[0]')) AS trip_purpose
     FROM booking_history bh
     JOIN car_inventory ci ON bh.car_id = ci.id
-    WHERE bh.booking_status = 'completed' 
+    WHERE bh.booking_status = 'completed'
       AND bh.payment_status = 'paid'
       AND JSON_LENGTH(bh.trip_purpose) > 0
     """
     df = pd.read_sql(sql, engine)
-    print(f"Training on {len(df)} real bookings")
+    print(f"Training on {len(df):,} real completed bookings")
     return df
 
-def train_model():
-    global model, encoders, features
+def train_double_dt():
+    global type_model, name_model, encoders, features
     df = extract_training_data()
-    df = df.dropna()
-    df['duration_days'] = df['duration_days'].clip(1, 365)
+    if df.empty:
+        print("No training data!")
+        return False
 
+    df = df.dropna()
+    df['duration_days'] = df['duration_days'].clip(1, 90)
     features = ['capacity', 'budget', 'duration_days', 'trip_purpose']
     X = df[features].copy()
-    y = df['car_type']
 
     le_purpose = LabelEncoder()
     X['trip_purpose'] = le_purpose.fit_transform(X['trip_purpose'].astype(str))
     encoders['trip_purpose'] = le_purpose
 
-    le_target = LabelEncoder()
-    y_encoded = le_target.fit_transform(y)
-    encoders['car_type'] = le_target
+    y_type = df['car_type']
+    type_model = DecisionTreeClassifier(max_depth=10, random_state=42, class_weight='balanced')
+    type_model.fit(X, y_type)
 
-    model = DecisionTreeClassifier(max_depth=12, min_samples_leaf=3, class_weight='balanced', random_state=42)
-    model.fit(X, y_encoded)
-
-    # Metrics
-    y_pred = model.predict(X)
-    y_true = le_target.inverse_transform(y_encoded)
-    y_pred_labels = le_target.inverse_transform(y_pred)
-
-    print("\n" + "="*80)
-    print("        CARZAM AI v4.0 — PURE ML + REAL BEHAVIOR + EXPLAINABLE")
-    print("="*80)
-    print(f"Training Data      : {len(df):,} real bookings")
-    print(f"Accuracy           : {accuracy_score(y_encoded, y_pred):.4%}")
-    print(f"Classes            : {len(le_target.classes_)} → {list(le_target.classes_)}")
-    report = classification_report(y_true, y_pred_labels, output_dict=True, zero_division=0)
-    for car_type in le_target.classes_:
-        support = int(report[car_type]['support'])
-        print(f"   {car_type:12} → Booked {support:,} times")
-    print("="*80 + "\n")
+    y_name = df['car_name']
+    name_model = DecisionTreeClassifier(max_depth=14, random_state=42, class_weight='balanced')
+    name_model.fit(X, y_name)
 
     os.makedirs('model', exist_ok=True)
-    joblib.dump(model, MODEL_PATH)
+    joblib.dump(type_model, TYPE_MODEL_PATH)
+    joblib.dump(name_model, NAME_MODEL_PATH)
     joblib.dump(encoders, ENCODER_PATH)
     joblib.dump(features, FEATURES_PATH)
+
+    print("PURE DOUBLE DTA + INQUIRY SUPPORT TRAINED")
     return True
 
-def load_model():
-    global model, encoders, features
-    if os.path.exists(MODEL_PATH):
-        model = joblib.load(MODEL_PATH)
+def load_models():
+    global type_model, name_model, encoders, features
+    paths = [TYPE_MODEL_PATH, NAME_MODEL_PATH, ENCODER_PATH, FEATURES_PATH]
+    
+    if all(os.path.exists(p) for p in paths):
+        type_model = joblib.load(TYPE_MODEL_PATH)
+        name_model = joblib.load(NAME_MODEL_PATH)
         encoders = joblib.load(ENCODER_PATH)
         features = joblib.load(FEATURES_PATH)
-        print("CARZAM AI v4.0 Loaded — Pure ML + Explainable + Real Ranking")
+        print("MODELS LOADED SUCCESSFULLY")
         return True
     else:
-        return train_model()
+        # On Render, we don't want to wait for training during startup
+        print("CRITICAL: Models not found in repository!")
+        return False
 
-def generate_explanation(payload, predicted_type):
-    capacity = payload['capacity']
-    purpose = payload['trip_purpose']
-    budget = payload['budget']
-    duration = payload['duration_days']
-    inquiry = payload.get('inquiry', '').strip().lower()
-
-    reasons = []
-
-    # Capacity-based
-    if capacity <= 5:
-        reasons.append(f"Compact size for {capacity} passengers")
-    elif capacity <= 12:
-        reasons.append(f"Perfect for groups of {capacity}")
-    else:
-        reasons.append(f"High-capacity transport for {capacity} people")
-
-    # Purpose-based
-    purpose_map = {
-        'cargo delivery': 'ideal for hauling goods',
-        'off-road': 'excellent ground clearance & durability',
-        'family trip': 'spacious, comfortable, safe',
-        'shuttle service': 'designed for multiple passengers',
-        'airport': 'luggage space + comfort',
-        'daily use': 'fuel-efficient & easy to drive',
-        'travel': 'long-distance comfort'
-    }
-    for key, phrase in purpose_map.items():
-        if key in purpose.lower():
-            reasons.append(phrase.title())
-
-    # Budget
-    if budget < 2500:
-        reasons.append("Best value within tight budget")
-    elif budget > 10000:
-        reasons.append("Premium comfort fits your budget")
-
-    # Inquiry keywords
-    if any(word in inquiry for word in ['child', 'baby', 'kid']):
-        reasons.append("Family-friendly with child seat support")
-    if any(word in inquiry for word in ['offroad', 'rough', 'mountain']):
-        reasons.append("Built for tough terrain")
-    if 'ac' in inquiry or 'cool' in inquiry:
-        reasons.append("Strong air conditioning")
-    if 'luxury' in inquiry or 'vip' in inquiry:
-        reasons.append("Premium experience")
-
-    # Final
-    if predicted_type in ['Pickup', 'SUV']:
-        reasons.append("Rugged & reliable")
-    elif predicted_type in ['Van', 'MPV']:
-        reasons.append("Maximum space & comfort")
-    elif predicted_type == 'Sedan':
-        reasons.append("Smooth, efficient, city-friendly")
-
-    return f"We recommended <strong>{predicted_type}</strong> because: " + " • ".join(reasons[:4])
-
-def predict_car_type(payload):
-    if not model:
-        return "Sedan", 0.0
+def predict_with_double_dt(payload):
+    if type_model is None or name_model is None:
+        return None, None, 0.0, 0.0
 
     row = pd.DataFrame([{
         'capacity': payload.get('capacity', 5),
@@ -176,29 +119,85 @@ def predict_car_type(payload):
     if purpose not in le.classes_:
         purpose = le.classes_[0]
     row['trip_purpose'] = le.transform([purpose])[0]
-    row = row[features]
 
-    pred_idx = model.predict(row)[0]
-    proba = model.predict_proba(row)[0]
-    confidence = max(proba)
-    predicted_type = encoders['car_type'].inverse_transform([pred_idx])[0]
+    X_input = row[features]
 
-    return predicted_type, confidence
+    type_proba = type_model.predict_proba(X_input)[0]
+    type_conf = max(type_proba)
+    predicted_type = type_model.classes_[type_proba.argmax()]
+
+    name_proba = name_model.predict_proba(X_input)[0]
+    name_conf = max(name_proba)
+    predicted_name = name_model.classes_[name_proba.argmax()]
+
+    return predicted_type, predicted_name, type_conf, name_conf
+
+# === INQUIRY KEYWORD MAPPING (AI reads every word) ===
+def matches_inquiry(car_row, inquiry_text):
+    if not inquiry_text:
+        return True
+    inquiry = inquiry_text.lower().strip()
+
+    matches = 0
+    total_keywords = 0
+
+    # Keyword to field mapping
+    keywords = {
+        'diesel': str(car_row['fuel_type']).lower(),
+        'gasoline': str(car_row['fuel_type']).lower(),
+        'automatic': str(car_row['transmission']).lower(),
+        'auto': str(car_row['transmission']).lower(),
+        'manual': str(car_row['transmission']).lower(),
+        'child': str(car_row['child_seat']).lower(),
+        'baby': str(car_row['child_seat']).lower(),
+        'seat': str(car_row['child_seat']).lower(),
+        'red': str(car_row['color']).lower(),
+        'black': str(car_row['color']).lower(),
+        'white': str(car_row['color']).lower(),
+        'silver': str(car_row['color']).lower(),
+        'blue': str(car_row['color']).lower(),
+        'ac': str(car_row['aircon']).lower(),
+        'aircon': str(car_row['aircon']).lower(),
+        'strong ac': str(car_row['aircon']).lower(),
+        'wide': str(car_row['wide_leg_room']).lower(),
+        'leg room': str(car_row['wide_leg_room']).lower(),
+        'compartment': str(car_row['wide_compartment']).lower(),
+        'big trunk': str(car_row['wide_compartment']).lower(),
+        'trunk': str(car_row['wide_compartment']).lower(),
+        'pwd': str(car_row['special_needs_friendly']).lower(),
+        'senior': str(car_row['special_needs_friendly']).lower(),
+        'handicap': str(car_row['special_needs_friendly']).lower(),
+    }
+
+    for keyword, field_value in keywords.items():
+        if keyword in inquiry:
+            total_keywords += 1
+            if keyword in field_value or field_value == 'y' or 'yes' in field_value:
+                matches += 1
+
+    # Also allow car name match
+    if any(word in str(car_row['car_name']).lower() for word in inquiry.split()):
+        matches += 1
+        total_keywords += 1
+
+    return matches > 0 and (matches / max(total_keywords, 1)) >= 0.5  # at least 50% keyword match
 
 @app.route('/predict', methods=['POST'])
 def predict():
     payload = request.get_json() or {}
     user_capacity = payload.get('capacity')
-    user_trip_purpose = payload.get('trip_purpose')
-    inquiry = payload.get('inquiry', '')
+    user_trip_purpose = payload.get('trip_purpose', 'Daily Use')
+    inquiry = payload.get('inquiry', '').strip()
 
-    predicted_type, confidence = predict_car_type(payload)
-    explanation = generate_explanation(payload, predicted_type)
+    predicted_type, predicted_name, type_conf, name_conf = predict_with_double_dt(payload)
+    if predicted_type is None:
+        return jsonify({"error": "Models not loaded"}), 500
 
     engine = create_engine(f"mysql+mysqlconnector://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}")
 
+    # First: Get cars matching Double DTA predictions + capacity
     sql = """
-    SELECT 
+    SELECT
         ci.*,
         sa.shop_name,
         sa.location,
@@ -211,18 +210,19 @@ def predict():
         AND bh.booking_status = 'completed'
         AND bh.payment_status = 'paid'
         AND JSON_UNQUOTE(JSON_EXTRACT(bh.trip_purpose, '$[0]')) = :trip_purpose
-    WHERE ci.car_type = :car_type
+    WHERE ci.car_type = :predicted_type
+      AND ci.car_name = :predicted_name
       AND ci.capacity = :capacity
       AND cr.rate_inside_zambales_12hrs IS NOT NULL
     GROUP BY ci.id
-    ORDER BY booking_count DESC, cr.rate_inside_zambales_12hrs ASC
-    LIMIT 12
+    LIMIT 20
     """
 
     try:
         with engine.connect() as conn:
             result = conn.execute(text(sql), {
-                "car_type": predicted_type,
+                "predicted_type": predicted_type,
+                "predicted_name": predicted_name,
                 "capacity": user_capacity,
                 "trip_purpose": user_trip_purpose
             })
@@ -230,41 +230,69 @@ def predict():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+    # Second: Apply inquiry keyword filtering (AI reads every word)
+    filtered_cars = []
+    for _, row in df_cars.iterrows():
+        if matches_inquiry(row, inquiry):
+            filtered_cars.append(row)
+
     recommendations = []
-    for i, row in df_cars.iterrows():
-        bookings = int(row['booking_count'] or 0)
+    for _, row in pd.DataFrame(filtered_cars).iterrows():
         recommendations.append({
             "car_id": int(row['id']),
             "car_name": row['car_name'],
             "car_type": row['car_type'],
             "capacity": int(row['capacity']),
-            "rate": float(row['rate_inside_zambales_12hrs'] or 0),
+            "rate": float(row['rate_inside_zambales_12hrs'] or 3000),
             "image": row['car_image'] or "PLACEHOLDER.png",
             "shop_name": row['shop_name'] or "Unknown Shop",
-            "location": row['location'] or "Zambales",
-            "ml_confidence": round(confidence * 100, 1),
-            "booking_count": bookings,
-            "rank": i + 1
+            "color": row['color'] or "Silver",
+            "fuel_type": row['fuel_type'] or "Gasoline",
+            "transmission": row['transmission'] or "Auto",
+            "special_needs_friendly": row['special_needs_friendly'] or "N",
+            "child_seat": row['child_seat'] or "N",
+            "wide_leg_room": row['wide_leg_room'] or "N",
+            "terrain": row['terrain'] or "Mixed",
+            "budget_friendly": row['budget_friendly'] or "N",
+            "aircon": row['aircon'] or "Y",
+            "wide_compartment": row['wide_compartment'] or "N",
+            "booking_count": int(row['booking_count'] or 0),
+            "ml_type_confidence": round(type_conf * 100, 1),
+            "ml_name_confidence": round(name_conf * 100, 1)
         })
 
     return jsonify({
         "ml_predicted_car_type": predicted_type,
-        "ml_confidence_percent": round(confidence * 100, 1),
-        "explanation": explanation,
-        "user_inquiry": inquiry,
+        "ml_predicted_best_car": predicted_name,
+        "type_confidence_percent": round(type_conf * 100, 1),
+        "name_confidence_percent": round(name_conf * 100, 1),
         "user_trip_purpose": user_trip_purpose,
         "user_capacity": user_capacity,
+        "user_inquiry": inquiry,
         "total_found": len(recommendations),
-        "recommendations": recommendations,
-        "ranking_by": "real_bookings_for_this_purpose",
-        "pure_ml": True,
+        "recommendations": recommendations[:12],
+        "ranking_by": "pure_double_dta_with_inquiry_keyword_filtering",
+        "model_type": "Pure Double Decision Tree + Natural Language Inquiry",
         "status": "success"
     })
-
+@app.route('/dbtest')
+def dbtest():
+    from sqlalchemy import create_engine
+    try:
+        engine = create_engine(f"mysql+mysqlconnector://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}")
+        conn = engine.connect()
+        conn.close()
+        return {"status": "ok", "message": "DB connected"}
+    except Exception as e:
+        return {"status": "fail", "error": str(e)}
+    
 @app.route('/')
 def home():
-    return "<h1>CARZAM AI v4.0 — Pure ML • Explainable • Real Behavior Ranked</h1>"
+    return "<h1>CARZAM AI v6 — PURE DOUBLE DTA + INQUIRY KEYWORDS (100% ML)</h1>"
 
 if __name__ == '__main__':
-    load_model()
-    app.run(port=5000, debug=False)
+    load_models()
+    # Render provides the PORT variable; default to 5000 for local
+    port = int(os.environ.get("PORT", 5000))
+    # '0.0.0.0' is REQUIRED for Render to see the app
+    app.run(host='0.0.0.0', port=port)
