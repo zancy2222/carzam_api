@@ -91,16 +91,39 @@ def load_models():
     global type_model, name_model, encoders, features
     paths = [TYPE_MODEL_PATH, NAME_MODEL_PATH, ENCODER_PATH, FEATURES_PATH]
     
-    if all(os.path.exists(p) for p in paths):
-        type_model = joblib.load(TYPE_MODEL_PATH)
-        name_model = joblib.load(NAME_MODEL_PATH)
-        encoders = joblib.load(ENCODER_PATH)
-        features = joblib.load(FEATURES_PATH)
-        print("MODELS LOADED SUCCESSFULLY")
-        return True
+    import os
+    
+    print("=== MODEL LOAD DEBUG START ===")
+    print("Current working dir:", os.getcwd())
+    print("os.listdir('.'):", os.listdir('.') if os.path.exists('.') else "cwd missing")
+    
+    if os.path.exists('model'):
+        print("model folder exists")
+        print("os.listdir('model'):", os.listdir('model'))
     else:
-        missing = [p for p in paths if not os.path.exists(p)]
-        print(f"CRITICAL: Models not found in repository! Missing files: {missing}")
+        print("model folder DOES NOT EXIST")
+    
+    missing = []
+    for p in paths:
+        exists = os.path.exists(p)
+        print(f"Path {p}: exists={exists}")
+        if not exists:
+            missing.append(p)
+    
+    if not missing:
+        try:
+            print("Attempting to load models...")
+            type_model = joblib.load(TYPE_MODEL_PATH)
+            name_model = joblib.load(NAME_MODEL_PATH)
+            encoders = joblib.load(ENCODER_PATH)
+            features = joblib.load(FEATURES_PATH)
+            print("MODELS LOADED SUCCESSFULLY - all joblib.load calls succeeded")
+            return True
+        except Exception as e:
+            print(f"joblib.load FAILED: {str(e)}")
+            return False
+    else:
+        print(f"CRITICAL: Files missing: {missing}")
         return False
 
 def predict_with_double_dt(payload):
