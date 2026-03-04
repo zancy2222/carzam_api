@@ -91,16 +91,39 @@ def load_models():
     global type_model, name_model, encoders, features
     paths = [TYPE_MODEL_PATH, NAME_MODEL_PATH, ENCODER_PATH, FEATURES_PATH]
     
-    if all(os.path.exists(p) for p in paths):
-        type_model = joblib.load(TYPE_MODEL_PATH)
-        name_model = joblib.load(NAME_MODEL_PATH)
-        encoders = joblib.load(ENCODER_PATH)
-        features = joblib.load(FEATURES_PATH)
-        print("MODELS LOADED SUCCESSFULLY")
-        return True
+    import os
+    
+    print("=== MODEL LOAD DEBUG START ===")
+    print("Current working dir:", os.getcwd())
+    print("os.listdir('.'):", os.listdir('.') if os.path.exists('.') else "cwd missing")
+    
+    if os.path.exists('model'):
+        print("model folder exists")
+        print("os.listdir('model'):", os.listdir('model'))
     else:
-        # On Render, we don't want to wait for training during startup
-        print("CRITICAL: Models not found in repository!")
+        print("model folder DOES NOT EXIST")
+    
+    missing = []
+    for p in paths:
+        exists = os.path.exists(p)
+        print(f"Path {p}: exists={exists}")
+        if not exists:
+            missing.append(p)
+    
+    if not missing:
+        try:
+            print("Attempting to load models...")
+            type_model = joblib.load(TYPE_MODEL_PATH)
+            name_model = joblib.load(NAME_MODEL_PATH)
+            encoders = joblib.load(ENCODER_PATH)
+            features = joblib.load(FEATURES_PATH)
+            print("MODELS LOADED SUCCESSFULLY - all joblib.load calls succeeded")
+            return True
+        except Exception as e:
+            print(f"joblib.load FAILED: {str(e)}")
+            return False
+    else:
+        print(f"CRITICAL: Files missing: {missing}")
         return False
 
 def predict_with_double_dt(payload):
@@ -190,8 +213,16 @@ def predict():
     inquiry = payload.get('inquiry', '').strip()
 
     predicted_type, predicted_name, type_conf, name_conf = predict_with_double_dt(payload)
+    
+    # Improved check + better error message
     if predicted_type is None:
-        return jsonify({"error": "Models not loaded"}), 500
+        if type_model is None or name_model is None:
+            return jsonify({
+                "error": "Machine learning models are not loaded. Please ensure the model files exist in the 'model/' folder and were correctly pushed to the repository.",
+                "status": "models_not_loaded"
+            }), 503  # 503 = Service Unavailable (more appropriate than 500 here)
+        else:
+            return jsonify({"error": "Prediction failed for unknown reason"}), 500
 
     engine = create_engine(f"mysql+mysqlconnector://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}")
 
@@ -275,6 +306,7 @@ def predict():
         "model_type": "Pure Double Decision Tree + Natural Language Inquiry",
         "status": "success"
     })
+
 @app.route('/dbtest')
 def dbtest():
     from sqlalchemy import create_engine
@@ -285,13 +317,40 @@ def dbtest():
         return {"status": "ok", "message": "DB connected"}
     except Exception as e:
         return {"status": "fail", "error": str(e)}
-    
+
+@app.route('/models-status')
+def models_status():
+    if type_model is not None and name_model is not None:
+        return {
+            "status": "ok",
+            "message": "Models are loaded successfully",
+            "type_model": "loaded",
+            "name_model": "loaded"
+        }
+    else:
+        missing = []
+        if not os.path.exists(TYPE_MODEL_PATH):    missing.append("dt_car_type.pkl")
+        if not os.path.exists(NAME_MODEL_PATH):    missing.append("dt_car_name.pkl")
+        if not os.path.exists(ENCODER_PATH):       missing.append("encoders.pkl")
+        if not os.path.exists(FEATURES_PATH):      missing.append("features.pkl")
+        
+        return {
+            "status": "fail",
+            "message": "Models are NOT loaded",
+            "missing_files": missing,
+            "hint": "Make sure you trained locally, saved the files in the 'model/' folder, committed them to git, and pushed to GitHub."
+        }, 503
+
 @app.route('/')
 def home():
     return "<h1>CARZAM AI v6 — PURE DOUBLE DTA + INQUIRY KEYWORDS (100% ML)</h1>"
 
 if __name__ == '__main__':
-    load_models()
+    # Load models at startup (will print success or failure to logs)
+    loaded = load_models()
+    if not loaded:
+        print("WARNING: Models failed to load at startup. /predict will return error until fixed.")
+    
     # Render provides the PORT variable; default to 5000 for local
     port = int(os.environ.get("PORT", 5000))
     # '0.0.0.0' is REQUIRED for Render to see the app

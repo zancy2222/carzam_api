@@ -19,11 +19,11 @@ NAME_MODEL_PATH = 'model/dt_car_name.pkl'
 ENCODER_PATH = 'model/encoders.pkl'
 FEATURES_PATH = 'model/features.pkl'
 
-# DB Config
+# DB Config – use production (Render) credentials
 DB_CONFIG = {
     'user': 'u784630674_root',
     'password': 'Carzam123.',
-    'host': 'srv2101.hstgr.io',  # <-- not localhost
+    'host': 'srv2101.hstgr.io',  # ← remote host, NOT localhost
     'database': 'u784630674_icrr'
 }
 
@@ -58,7 +58,7 @@ def train_double_dt():
     global type_model, name_model, encoders, features
     df = extract_training_data()
     if df.empty:
-        print("No training data!")
+        print("No training data available!")
         return False
 
     df = df.dropna()
@@ -91,40 +91,20 @@ def load_models():
     global type_model, name_model, encoders, features
     paths = [TYPE_MODEL_PATH, NAME_MODEL_PATH, ENCODER_PATH, FEATURES_PATH]
     
-    import os
-    
-    print("=== MODEL LOAD DEBUG START ===")
-    print("Current working dir:", os.getcwd())
-    print("os.listdir('.'):", os.listdir('.') if os.path.exists('.') else "cwd missing")
-    
-    if os.path.exists('model'):
-        print("model folder exists")
-        print("os.listdir('model'):", os.listdir('model'))
-    else:
-        print("model folder DOES NOT EXIST")
-    
-    missing = []
-    for p in paths:
-        exists = os.path.exists(p)
-        print(f"Path {p}: exists={exists}")
-        if not exists:
-            missing.append(p)
-    
-    if not missing:
+    if all(os.path.exists(p) for p in paths):
         try:
-            print("Attempting to load models...")
             type_model = joblib.load(TYPE_MODEL_PATH)
             name_model = joblib.load(NAME_MODEL_PATH)
             encoders = joblib.load(ENCODER_PATH)
             features = joblib.load(FEATURES_PATH)
-            print("MODELS LOADED SUCCESSFULLY - all joblib.load calls succeeded")
+            print("PURE DOUBLE DTA + INQUIRY MODELS LOADED SUCCESSFULLY")
             return True
         except Exception as e:
-            print(f"joblib.load FAILED: {str(e)}")
+            print(f"Model loading failed: {str(e)}")
             return False
     else:
-        print(f"CRITICAL: Files missing: {missing}")
-        return False
+        print("Models not found in disk. Attempting to train once...")
+        return train_double_dt()
 
 def predict_with_double_dt(payload):
     if type_model is None or name_model is None:
@@ -140,7 +120,7 @@ def predict_with_double_dt(payload):
     le = encoders['trip_purpose']
     purpose = row['trip_purpose'].iloc[0]
     if purpose not in le.classes_:
-        purpose = le.classes_[0]
+        purpose = le.classes_[0]  # fallback to most common / first class
     row['trip_purpose'] = le.transform([purpose])[0]
 
     X_input = row[features]
@@ -155,7 +135,7 @@ def predict_with_double_dt(payload):
 
     return predicted_type, predicted_name, type_conf, name_conf
 
-# === INQUIRY KEYWORD MAPPING (AI reads every word) ===
+# ── Inquiry keyword matching (unchanged) ─────────────────────────────────────
 def matches_inquiry(car_row, inquiry_text):
     if not inquiry_text:
         return True
@@ -164,7 +144,6 @@ def matches_inquiry(car_row, inquiry_text):
     matches = 0
     total_keywords = 0
 
-    # Keyword to field mapping
     keywords = {
         'diesel': str(car_row['fuel_type']).lower(),
         'gasoline': str(car_row['fuel_type']).lower(),
@@ -195,15 +174,15 @@ def matches_inquiry(car_row, inquiry_text):
     for keyword, field_value in keywords.items():
         if keyword in inquiry:
             total_keywords += 1
-            if keyword in field_value or field_value == 'y' or 'yes' in field_value:
+            if keyword in field_value or field_value in ('y', 'yes'):
                 matches += 1
 
-    # Also allow car name match
+    # Car name partial match bonus
     if any(word in str(car_row['car_name']).lower() for word in inquiry.split()):
         matches += 1
         total_keywords += 1
 
-    return matches > 0 and (matches / max(total_keywords, 1)) >= 0.5  # at least 50% keyword match
+    return matches > 0 and (matches / max(total_keywords, 1)) >= 0.5
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -214,19 +193,17 @@ def predict():
 
     predicted_type, predicted_name, type_conf, name_conf = predict_with_double_dt(payload)
     
-    # Improved check + better error message
     if predicted_type is None:
         if type_model is None or name_model is None:
             return jsonify({
-                "error": "Machine learning models are not loaded. Please ensure the model files exist in the 'model/' folder and were correctly pushed to the repository.",
+                "error": "ML models not loaded. Train locally → commit 'model/' folder → push to git.",
                 "status": "models_not_loaded"
-            }), 503  # 503 = Service Unavailable (more appropriate than 500 here)
+            }), 503
         else:
-            return jsonify({"error": "Prediction failed for unknown reason"}), 500
+            return jsonify({"error": "Prediction failed"}), 500
 
     engine = create_engine(f"mysql+mysqlconnector://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}")
 
-    # First: Get cars matching Double DTA predictions + capacity
     sql = """
     SELECT
         ci.*,
@@ -261,14 +238,10 @@ def predict():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-    # Second: Apply inquiry keyword filtering (AI reads every word)
-    filtered_cars = []
-    for _, row in df_cars.iterrows():
-        if matches_inquiry(row, inquiry):
-            filtered_cars.append(row)
+    filtered_cars = [row for _, row in df_cars.iterrows() if matches_inquiry(row, inquiry)]
 
     recommendations = []
-    for _, row in pd.DataFrame(filtered_cars).iterrows():
+    for row in filtered_cars:
         recommendations.append({
             "car_id": int(row['id']),
             "car_name": row['car_name'],
@@ -309,36 +282,30 @@ def predict():
 
 @app.route('/dbtest')
 def dbtest():
-    from sqlalchemy import create_engine
     try:
         engine = create_engine(f"mysql+mysqlconnector://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}/{DB_CONFIG['database']}")
-        conn = engine.connect()
-        conn.close()
-        return {"status": "ok", "message": "DB connected"}
+        with engine.connect() as conn:
+            return {"status": "ok", "message": "Database connected"}
     except Exception as e:
         return {"status": "fail", "error": str(e)}
 
 @app.route('/models-status')
 def models_status():
     if type_model is not None and name_model is not None:
-        return {
-            "status": "ok",
-            "message": "Models are loaded successfully",
-            "type_model": "loaded",
-            "name_model": "loaded"
-        }
+        return {"status": "ok", "message": "Models loaded"}
     else:
         missing = []
-        if not os.path.exists(TYPE_MODEL_PATH):    missing.append("dt_car_type.pkl")
-        if not os.path.exists(NAME_MODEL_PATH):    missing.append("dt_car_name.pkl")
-        if not os.path.exists(ENCODER_PATH):       missing.append("encoders.pkl")
-        if not os.path.exists(FEATURES_PATH):      missing.append("features.pkl")
-        
+        for p, name in zip(
+            [TYPE_MODEL_PATH, NAME_MODEL_PATH, ENCODER_PATH, FEATURES_PATH],
+            ["dt_car_type.pkl", "dt_car_name.pkl", "encoders.pkl", "features.pkl"]
+        ):
+            if not os.path.exists(p):
+                missing.append(name)
         return {
             "status": "fail",
-            "message": "Models are NOT loaded",
+            "message": "Models not loaded",
             "missing_files": missing,
-            "hint": "Make sure you trained locally, saved the files in the 'model/' folder, committed them to git, and pushed to GitHub."
+            "hint": "Train locally, save to model/, commit & push folder to git"
         }, 503
 
 @app.route('/')
@@ -346,12 +313,10 @@ def home():
     return "<h1>CARZAM AI v6 — PURE DOUBLE DTA + INQUIRY KEYWORDS (100% ML)</h1>"
 
 if __name__ == '__main__':
-    # Load models at startup (will print success or failure to logs)
+    # Try to load (or train) at startup
     loaded = load_models()
     if not loaded:
-        print("WARNING: Models failed to load at startup. /predict will return error until fixed.")
-    
-    # Render provides the PORT variable; default to 5000 for local
+        print("WARNING: Models not loaded at startup → /predict will fail until fixed.")
+
     port = int(os.environ.get("PORT", 5000))
-    # '0.0.0.0' is REQUIRED for Render to see the app
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=False)
